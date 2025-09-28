@@ -1,0 +1,142 @@
+services:
+  minio:
+    image: minio/minio
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - ./minio-storage:/data
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio@123
+    command: server --console-address ":9001" /data
+    networks:
+      - datanet
+
+  postgres-metastore:
+    image: postgres:14
+    container_name: postgres-metastore
+    environment:
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: hive
+      POSTGRES_DB: metastore
+      POSTGRES_HOST_AUTH_METHOD: password
+    volumes:
+      - ./postgres-init:/docker-entrypoint-initdb.d
+    networks:
+      - datanet
+
+  hive-metastore:
+    image: apache/hive:4.0.0
+    container_name: hive-metastore
+    depends_on:
+      - postgres-metastore
+      - minio
+    environment:
+      SERVICE_NAME: metastore
+      HIVE_METASTORE_DB_TYPE: postgres
+      HIVE_METASTORE_USER: hive
+      HIVE_METASTORE_PASSWORD: hive
+      HIVE_METASTORE_DB_HOST: postgres-metastore
+      HIVE_METASTORE_DB_NAME: metastore
+      DB_DRIVER: postgres
+    volumes:
+      - ./hive-conf:/opt/hive/conf
+      - ./jars/postgresql-42.6.2.jar:/opt/hive/lib/postgresql-42.6.2.jar
+      - ./jars/hadoop-aws-3.3.4.jar:/opt/hive/lib/hadoop-aws-3.3.4.jar
+      - ./jars/aws-java-sdk-bundle-1.12.367.jar:/opt/hive/lib/aws-java-sdk-bundle-1.12.367.jar
+    ports:
+      - "9083:9083"
+    networks:
+      - datanet
+
+  hive-server:
+    image: apache/hive:4.0.0
+    container_name: hive-server
+    depends_on:
+      - hive-metastore
+    environment:
+      SERVICE_NAME: metastore
+      HIVE_METASTORE_DB_TYPE: postgres
+      HIVE_METASTORE_USER: hive
+      HIVE_METASTORE_PASSWORD: hive
+      HIVE_METASTORE_DB_HOST: postgres-metastore
+      HIVE_METASTORE_DB_NAME: metastore
+      DB_DRIVER: postgres
+    volumes:
+      - ./hive-conf:/opt/hive/conf
+      - ./jars/postgresql-42.6.2.jar:/opt/hive/lib/postgresql-42.6.2.jar
+      - ./jars/hadoop-aws-3.3.4.jar:/opt/hive/lib/hadoop-aws-3.3.4.jar
+      - ./jars/aws-java-sdk-bundle-1.12.367.jar:/opt/hive/lib/aws-java-sdk-bundle-1.12.367.jar
+    ports:
+      - "10000:10000"
+    networks:
+      - datanet
+
+  trino-coordinator:
+    image: trinodb/trino:441
+    container_name: trino-coordinator
+    hostname: trino-coordinator
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./trino/coordinator:/etc/trino
+    environment:
+      - NODE_ID=1
+    networks:
+      - datanet
+
+  trino-worker:
+    image: trinodb/trino:441
+    container_name: trino-worker
+    hostname: trino-worker
+    volumes:
+      - ./trino/worker:/etc/trino
+    environment:
+      - NODE_ID=2
+    networks:
+      - datanet
+
+  spark-master:
+    image: bitnami/spark:3.5.1
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_MASTER_MEMORY=1G
+      - SPARK_MASTER_CORES=1
+    volumes:
+      - ./hive-conf/hive-site.xml:/opt/bitnami/spark/conf/hive-site.xml
+      - ./jars/hadoop-aws-3.3.4.jar:/opt/bitnami/spark/jars/hadoop-aws-3.3.4.jar
+      - ./jars/aws-java-sdk-bundle-1.12.367.jar:/opt/bitnami/spark/jars/aws-java-sdk-bundle-1.12.237.jar
+      - ./spark-jobs:/opt/bitnami/spark/jobs
+    depends_on:
+      - hive-server
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+      - "4040:4040"
+    networks:
+      - datanet
+
+  spark-worker:
+    image: bitnami/spark:3.5.1
+    container_name: spark-worker
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=1G
+      - SPARK_WORKER_CORES=1
+    volumes:
+      - ./hive-conf/hive-site.xml:/opt/bitnami/spark/conf/hive-site.xml
+      - ./jars/hadoop-aws-3.3.4.jar:/opt/bitnami/spark/jars/hadoop-aws-3.3.4.jar
+      - ./jars/aws-java-sdk-bundle-1.12.367.jar:/opt/bitnami/spark/jars/aws-java-sdk-bundle-1.12.237.jar
+    depends_on:
+      - spark-master
+    ports:
+      - "8082:8081"
+    networks:
+      - datanet
+networks:
+  datanet:
+    driver: bridge
