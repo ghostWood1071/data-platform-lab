@@ -1,5 +1,4 @@
 @echo off
-setlocal enabledelayedexpansion
 
 if not exist jars mkdir jars
 
