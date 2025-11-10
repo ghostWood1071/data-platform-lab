@@ -1,7 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
 
-echo >>> Tạo thư mục jars...
 if not exist jars mkdir jars
 
 echo >>> Download các file JAR...
